@@ -1,0 +1,17 @@
+{
+  "name": "crypto_payment_gateway",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.95.1",
+    "bull": "^4.15.1",
+    "ethers": "^6.13.1",
+    "winston": "^3.13.1"
+  }
+}
