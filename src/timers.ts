@@ -21,7 +21,12 @@ export class Timers {
         });
     }
 
-    startTimer(address: string, callback: TimerJob['callback']): void {
-        this.addressQueue.add({ address, callback }, { delay: 5 * 60 * 1000 }); // 5 minutes
+    startTimer(
+        address: string,
+        callback: (error: Error | null, result: any) => void,
+        expirationTime: number = 5 * 60 * 1000 // Default to 5 minutes
+    ): void {
+        // Add a job to the queue with the specified delay and data
+        this.addressQueue.add({ address, callback }, { delay: expirationTime });
     }
 }

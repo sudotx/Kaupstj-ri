@@ -1,5 +1,5 @@
 {
-  "name": "crypto_payment_gateway",
+  "name": "Kaupstjóri",
   "module": "index.ts",
   "type": "module",
   "devDependencies": {
