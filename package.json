@@ -1,5 +1,5 @@
 {
-  "name": "Kaupstjóri",
+  "name": "Kaupstjri",
   "module": "index.ts",
   "type": "module",
   "devDependencies": {
@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@solana/web3.js": "^1.95.1",
+    "@types/qrcode": "^1.5.5",
+    "@types/sqlite3": "^3.1.11",
     "bull": "^4.15.1",
     "ethers": "^6.13.1",
     "qrcode": "^1.5.4",
