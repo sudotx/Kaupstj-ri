@@ -4,15 +4,23 @@ type TransactionCallback = (error: Error | null, transaction: ethers.Transaction
 
 export class Ethereum {
     private provider: ethers.JsonRpcProvider;
+    private masterWallet: ethers.Wallet;
 
-    constructor(rpcUrl: string) {
+    constructor(rpcUrl: string, masterPrivateKey: string) {
         this.provider = new ethers.JsonRpcProvider(rpcUrl);
+        this.masterWallet = new ethers.Wallet(masterPrivateKey, this.provider);
     }
 
     async generateAddress(): Promise<string> {
-        const wallet = ethers.Wallet.createRandom();
-        return wallet.address;
+        this.masterWallet.connect(this.provider);
+        return this.masterWallet.address;
     }
+
+    async validateAddress(address: string) {
+        const regex = /^0x[a-fA-F0-9]{40}$/;
+        return regex.test(address);
+    }
+
 
     async monitorTransactions(callback: TransactionCallback): Promise<void> {
         this.provider.on('pending', async (tx: string) => {
@@ -22,7 +30,6 @@ export class Ethereum {
                     callback(null, transaction);
                 }
             } catch (error) {
-                // callback(error, null);
                 console.log(error);
             }
         });
