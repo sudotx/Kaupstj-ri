@@ -21,6 +21,12 @@ export class Ethereum {
         return regex.test(address);
     }
 
+    async getBalance(address: string): Promise<number> {
+        // const balance = await this.connection.getBalance(new solana.PublicKey(address));
+        // return balance / solana.LAMPORTS_PER_SOL;
+        return 1
+    }
+
 
     async monitorTransactions(callback: TransactionCallback): Promise<void> {
         this.provider.on('pending', async (tx: string) => {

@@ -1,37 +1,47 @@
-import type { ethers } from 'ethers';
 import QRCode from 'qrcode';
 import { Database } from './utils/db';
 import { Ethereum } from './utils/ethereum';
 import { Solana } from './utils/solana';
-import { Timers } from './utils/timers';
 
-// Define callback types for payment sessions and transaction monitoring
-type PaymentCallback = (error: Error | null, result: any) => void;
-type TransactionCallback = (error: Error | null, transaction: ethers.TransactionResponse | null) => void;
+type Blockchain = 'ethereum' | 'solana';
 
 export class CryptoPaymentGateway {
-    private ethereum: Ethereum;  // Instance for Ethereum operations
-    private solana: Solana;      // Instance for Solana operations
-    private timers: Timers;      // Instance for timer management
-    public database: Database;  // Instance for database operations
+    private ethereum: Ethereum;
+    private solana: Solana;
+    public database: Database;
 
-    /**
-     * Initializes the CryptoPaymentGateway with the provided RPC URLs for Ethereum and Solana.
-     * Sets up the timer management system.
-     * 
-     * @param ethereumRpcUrl - The RPC URL for the Ethereum blockchain.
-     * @param solanaRpcUrl - The RPC URL for the Solana blockchain.
-     */
     constructor(ethereumRpcUrl: string, solanaRpcUrl: string, masterPrivateKey: string) {
         this.ethereum = new Ethereum(ethereumRpcUrl, masterPrivateKey);
         this.solana = new Solana(solanaRpcUrl);
-        this.timers = new Timers();
-        this.timers.setupTimers();  // Initialize timers
-
-        this.database = new Database();  // Initialize the database
+        this.database = new Database();
     }
 
-    async generateAddressQRCode(address: string): Promise<string> {
+    async init() {
+        await this.database.init();
+    }
+
+    async initiateTransferSession(
+        blockchain: Blockchain,
+        amount: string,
+        expirationTime: number = 15 * 60 * 1000 // Default to 15 minutes
+    ): Promise<{ address: string, qrCode: string }> {
+        const expiresAt = new Date(Date.now() + expirationTime);
+        const addressIndex = await this.database.getNextAddressIndex(blockchain);
+        const address = await this.generateAddress(blockchain);
+        await this.database.saveAddress(address, blockchain, addressIndex);
+        const qrCode = await this.generateAddressQRCode(address);
+        const sessionId = await this.database.createTransferSession(address, amount, expiresAt);
+
+        this.monitorSession(sessionId, blockchain, address, amount, expirationTime);
+
+        return { address, qrCode };
+    }
+
+    private async generateAddress(blockchain: Blockchain): Promise<string> {
+        return blockchain === 'ethereum' ? await this.ethereum.generateAddress() : await this.solana.generateAddress();
+    }
+
+    private async generateAddressQRCode(address: string): Promise<string> {
         return new Promise((resolve, reject) => {
             QRCode.toDataURL(address, (err, url) => {
                 if (err) reject(err);
@@ -40,74 +50,41 @@ export class CryptoPaymentGateway {
         });
     }
 
-    async init() {
-        await this.database.init();
-    }
+    private monitorSession(sessionId: number, blockchain: Blockchain, address: string, amount: string, expirationTime: number) {
+        const checkBalance = async () => {
+            const balance = `${await this.getBalance(blockchain, address)}`;
+            if (parseFloat(balance) >= parseFloat(amount)) {
+                clearTimeout(expirationTimer);
+                clearInterval(checkInterval);
+                await this.handleSuccessfulPayment(sessionId);
+            }
+        };
 
-    async createEthereumTransferSession(
-        toUser: string,
-        amount: string,
-        callback: PaymentCallback,
-        options: { expirationTime?: number } = {}
-    ): Promise<{ address: string, qrCode: string }> {
-        const expirationTime = options.expirationTime || 5 * 60 * 1000; // Default to 5 minutes
-        const expiresAt = new Date(Date.now() + expirationTime);
+        const checkInterval = setInterval(checkBalance, 10000); // Check every 10 seconds
 
-        const addressIndex = await this.database.getNextAddressIndex('ethereum');
-        const address = await this.ethereum.generateAddress();
-        await this.database.saveAddress(address, 'ethereum', addressIndex);
-
-        const sessionId = await this.database.createTransferSession(address, toUser, amount, expiresAt);
-        const qrCode = await this.generateAddressQRCode(address);
-
-        this.ethereum.monitorTransactions(callback)
-
-        setTimeout(async () => {
-            await this.handleExpiredSession(sessionId, callback);
+        const expirationTimer = setTimeout(async () => {
+            clearInterval(checkInterval);
+            await this.handleExpiredSession(sessionId);
         }, expirationTime);
 
-        return { address, qrCode };
+        checkBalance(); // Check immediately once
     }
 
-    async createSolanaTransferSession(
-        toUser: string,
-        amount: string,
-        callback: PaymentCallback,
-        options: { expirationTime?: number } = {}
-    ): Promise<{ address: string, qrCode: string }> {
-        const expirationTime = options.expirationTime || 5 * 60 * 1000; // Default to 5 minutes
-        const expiresAt = new Date(Date.now() + expirationTime);
-
-        const addressIndex = await this.database.getNextAddressIndex('solana');
-        const address = await this.solana.generateAddress();
-        await this.database.saveAddress(address, 'solana', addressIndex);
-        const qrCode = await this.generateAddressQRCode(address);
-        const sessionId = await this.database.createTransferSession(address, toUser, amount, expiresAt);
-
-        if (sessionId) {
-            this.solana.monitorTransactions(callback);
-            setTimeout(async () => {
-                await this.handleExpiredSession(sessionId, callback);
-            }, expirationTime);
-        } else {
-            this.handleSuccessfulPayment(sessionId, 'transactionHash', callback);
-        }
-
-        return { address, qrCode };
+    private async getBalance(blockchain: Blockchain, address: string): Promise<number> {
+        return blockchain === 'ethereum' ? await this.ethereum.getBalance(address) : await this.solana.getBalance(address);
     }
 
-    private async handleSuccessfulPayment(sessionId: number, transactionHash: string, callback: PaymentCallback): Promise<void> {
+    private async handleSuccessfulPayment(sessionId: number): Promise<void> {
         await this.database.updateTransferSessionStatus(sessionId, 'completed');
-        callback(null, { sessionId, transactionHash, status: 'completed' });
+        console.log(`Payment received for session ${sessionId}`);
     }
 
-    private async handleExpiredSession(sessionId: number, callback: PaymentCallback): Promise<void> {
+    private async handleExpiredSession(sessionId: number): Promise<void> {
         await this.database.updateTransferSessionStatus(sessionId, 'expired');
-        callback(null, { sessionId, status: 'expired' });
+        console.log(`Session ${sessionId} expired`);
     }
 
     async close(): Promise<void> {
-        // Close database connection
         await new Promise<void>((resolve, reject) => {
             this.database.db.close((err) => {
                 if (err) reject(err);
@@ -116,34 +93,3 @@ export class CryptoPaymentGateway {
         });
     }
 }
-
-
-async function main() {
-    const gateway = new CryptoPaymentGateway(
-        'https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID',
-        'https://api.mainnet-beta.solana.com',
-        'your_master_private_key_here'
-    );
-
-    await gateway.init();
-
-    try {
-        // const { address, qrCode } = await gateway.createTransferSession(
-        //     'recipientUserId',
-        //     0.1, // Amount in ETH
-        //     (error, result) => {
-        //         if (error) console.error('Transfer session error:', error);
-        //         if (result?.expired) console.log('Transfer session expired');
-        //     },
-        //     { expirationTime: 15 * 60 * 1000 } // 15 minutes
-        // );
-
-        // console.log('Transfer address:', address);
-        // console.log('QR Code:', qrCode);
-    } finally {
-        // Ensure the database is closed when the program exits
-        await gateway.close();
-    }
-}
-
-main().catch(console.error);

@@ -58,11 +58,11 @@ export class Database {
         });
     }
 
-    async createTransferSession(address: string, toUser: string, amount: string, expiresAt: Date): Promise<number> {
+    async createTransferSession(address: string, amount: string, expiresAt: Date): Promise<number> {
         return new Promise((resolve, reject) => {
             this.db.run(
-                'INSERT INTO transfer_sessions (address, to_user, amount, status, expires_at) VALUES (?, ?, ?, ?, ?)',
-                [address, toUser, amount, 'pending', expiresAt.toISOString()],
+                'INSERT INTO transfer_sessions (address, amount, status, expires_at) VALUES (?, ?, ?, ?, ?)',
+                [address, amount, 'pending', expiresAt.toISOString()],
                 function (err) {
                     if (err) reject(err);
                     else resolve(this.lastID);
