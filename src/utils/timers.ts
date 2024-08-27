@@ -2,31 +2,72 @@ import Bull from 'bull';
 
 type TimerJob = {
     address: string;
-    callback: (error: Error | null, result: { address: string; expired: boolean }) => void;
+    amount: string;
+    blockchain: string;
+    expirationTime: number;
 };
+
+type TimerCallback = (error: Error | null, result: { address: string; amount: string; blockchain: string; expired: boolean }) => void;
 
 export class Timers {
     private addressQueue: Bull.Queue<TimerJob>;
+    private callbacks: Map<string, TimerCallback> = new Map();
 
-    constructor() {
-        this.addressQueue = new Bull<TimerJob>('addressQueue');
+    constructor(redisUrl: string) {
+        this.addressQueue = new Bull<TimerJob>('addressQueue', redisUrl);
     }
 
-    setupTimers(): void {
+    async setupTimers(): Promise<void> {
+        await this.addressQueue.empty();
         this.addressQueue.process(async (job) => {
-            const { address, callback } = job.data;
+            const { address, amount, blockchain } = job.data;
+            const callback = this.callbacks.get(address);
             if (callback) {
-                callback(null, { address, expired: true });
+                callback(null, { address, amount, blockchain, expired: true });
+                this.callbacks.delete(address);
+            }
+        });
+
+        this.addressQueue.on('failed', (job, err) => {
+            console.error(`Job failed for address ${job.data.address}:`, err);
+            const callback = this.callbacks.get(job.data.address);
+            if (callback) {
+                callback(err, { address: job.data.address, amount: job.data.amount, blockchain: job.data.blockchain, expired: false });
+                this.callbacks.delete(job.data.address);
             }
         });
     }
 
-    startTimer(
+    async startTimer(
         address: string,
-        callback: (error: Error | null, result: any) => void,
-        expirationTime: number = 5 * 60 * 1000 // Default to 5 minutes
-    ): void {
-        // Add a job to the queue with the specified delay and data
-        this.addressQueue.add({ address, callback }, { delay: expirationTime });
+        amount: string,
+        blockchain: string,
+        callback: TimerCallback,
+        expirationTime: number = 5 * 60 * 1000 // default to 5 minutes
+    ): Promise<void> {
+        this.callbacks.set(address, callback);
+        await this.addressQueue.add(
+            { address, amount, blockchain, expirationTime },
+            { delay: expirationTime, jobId: address }
+        );
+    }
+
+    async cancelTimer(address: string): Promise<boolean> {
+        const job = await this.addressQueue.getJob(address);
+        if (job) {
+            await job.remove();
+            this.callbacks.delete(address);
+            return true;
+        }
+        return false;
+    }
+
+    async getActiveTimers(): Promise<TimerJob[]> {
+        const jobs = await this.addressQueue.getJobs(['delayed', 'active']);
+        return jobs.map(job => job.data);
+    }
+
+    async close(): Promise<void> {
+        await this.addressQueue.close();
     }
 }
